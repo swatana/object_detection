@@ -4,29 +4,33 @@ import os
 import glob
 import json
 import cv2
-from scipy.ndimage.interpolation import affine_transform
+import numpy as np
+from pycocotools.coco import COCO
+import matplotlib.pyplot as plt
 
 
 def coco_split(load_dir, save_dir, n_rows, n_columns, intersect_border):
     load_pathes = glob.glob(os.path.join(load_dir, '*.json'))
     load_pathes.sort()
-
-    def calc_id(origin_id, i, j):
-        return id * n_rows * n_columns + i * n_rows + j
     
     # (共通部分のbbox, 面積比) を返す
     def calc_intersect_area(bbox, i, j, height, width):
         before_area = bbox[2] * bbox[3]
-        sx = max(bbox[0], i * height // n_rows)
-        ex = min(bbox[0] + bbox[2], (i + 1) * height // n_rows)
-        sy = max(bbox[1], j * width // n_columns)
-        ey = min(bbox[1] + bbox[3], (j + 1) * width // n_columns)
-        after_area = (ey - sy) * (ex - sx)
+        sx = max(bbox[0], j * width // n_columns)
+        ex = min(bbox[0] + bbox[2], (j + 1) * width // n_columns)
+        sy = max(bbox[1], i * height // n_rows)
+        ey = min(bbox[1] + bbox[3], (i + 1) * height // n_rows)
+
+        after_area = (ey - sy) * (ex - sx) if ex > sx and ey > sy else 0
+
         return [sx, sy, ex - sx, ey - sy], after_area / before_area
 
     os.makedirs(save_dir, exist_ok=True)
 
     for load_json_path in load_pathes:
+
+        img_cnt = 1
+        img_id_dict = {}
 
         with open(load_json_path) as f:
             data = json.load(f)
@@ -50,17 +54,19 @@ def coco_split(load_dir, save_dir, n_rows, n_columns, intersect_border):
                         suffix = "_%d_%d" % (i, j)
                         write_img_basename = body + suffix + ext
                         save_img_path = os.path.join(save_dir, write_img_basename)
-                        cropped = img[i * height // n_rows: (i + 1) * height // n_rows, j * width // n_columns: (j + 1) * width // n_columns]
+                        cropped = img[i * height // n_rows : (i + 1) * height // n_rows, j * width // n_columns : (j + 1) * width // n_columns]
+                        img_id_dict[(id, i, j)] = img_cnt
                         cv2.imwrite(save_img_path, cropped)
 
                         save_img_json = {}
-                        save_img_json['id'] = calc_id(id, i, j)
+                        save_img_json['id'] = img_cnt
                         save_img_json['dataset_id'] = image_json['dataset_id']
                         save_img_json['file_name'] = write_img_basename
                         save_img_json['path'] = save_img_path
                         save_img_json['height'] = cropped.shape[0]
                         save_img_json['width'] = cropped.shape[1]
                         save_json['images'].append(save_img_json)
+                        img_cnt += 1
 
             for anot in data['annotations']:
                 for i in range(0, n_rows):
@@ -68,17 +74,17 @@ def coco_split(load_dir, save_dir, n_rows, n_columns, intersect_border):
                         bbox, intersect_per = calc_intersect_area(anot['bbox'], i, j, img_sizes[anot['image_id']]['height'], img_sizes[anot['image_id']]['width'])
                         if intersect_per > intersect_border:
                             save_anot =copy.deepcopy(anot)
-                            save_anot['image_id'] = calc_id(anot['image_id'], i, j)
-                            save_anot['bbox'] = bbox
+                            save_anot['image_id'] = img_id_dict[(id, i, j)]
+                            save_anot['bbox'] = [bbox[0] - j * width // n_columns, bbox[1] - i * height // n_rows, bbox[2], bbox[3]]
                             save_anot['area'] = bbox[2] * bbox[3]
                             segmentation = []
                             for polygon in anot['segmentation']:
                                 after_polygon = []
                                 for idx, pos in enumerate(polygon):
                                     if idx % 2 == 0:
-                                        after_polygon.append(max(i * height // n_rows, min((i + 1) * height // n_rows, pos)) - i * height // n_rows)
+                                        after_polygon.append(max(j * width // n_columns, min((j + 1) * width // n_columns, pos)) - j * width // n_columns)
                                     else:
-                                        after_polygon.append(max(j * width // n_columns, min((j + 1) * width // n_columns, pos)) - j * width // n_rows)
+                                        after_polygon.append(max(i * height // n_rows, min((i + 1) * height // n_rows, pos)) - i * height // n_rows)
                                 segmentation.append(after_polygon)
                             save_anot['segmentation'] = segmentation
                             save_json['annotations'].append(save_anot)
