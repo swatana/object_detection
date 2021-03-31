@@ -4,9 +4,6 @@ import os
 import glob
 import json
 import cv2
-import numpy as np
-from pycocotools.coco import COCO
-import matplotlib.pyplot as plt
 
 
 def coco_split(load_dir, save_dir, n_rows, n_columns, intersect_border):
